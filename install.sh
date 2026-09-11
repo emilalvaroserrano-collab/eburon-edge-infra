@@ -26,7 +26,11 @@ esac
 info "Eburon Edge ${VERSION} — one-command installer"
 info "Internet is required only for initial provisioning."
 
-pkg install -y curl unzip coreutils >/dev/null
+# Termux splits the OpenSSL command-line binary into openssl-tool.
+# The payload verifies npm tarball integrity with the `openssl` command,
+# so install the CLI explicitly before the payload starts.
+pkg install -y curl unzip coreutils openssl-tool >/dev/null
+command -v openssl >/dev/null 2>&1 || fail 'Termux OpenSSL CLI is unavailable after installing openssl-tool.'
 
 BASE="https://raw.githubusercontent.com/${REPO}/${RELEASE_REF}/dist"
 info "Downloading ${PACKAGE}…"
