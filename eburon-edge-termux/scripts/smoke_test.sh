@@ -8,8 +8,11 @@ T=http://127.0.0.1:8851
 EXPECTED_VERSION="$(EBURON_ROOT="$ROOT" python -c 'import json,os;print(json.load(open(os.path.join(os.environ["EBURON_ROOT"],"config","release.json")))["eburon"])')"
 pass(){ echo "  ✓ $1"; }
 
-curl -fsS "$T/health"|grep -Eq '"model_loaded"[[:space:]]*:[[:space:]]*true'
-pass 'M2M100 model resident'
+TH="$(curl -fsS "$T/health")"
+printf '%s' "$TH"|grep -Eq '"model_loaded"[[:space:]]*:[[:space:]]*true'
+printf '%s' "$TH"|grep -q '"runtime":"deno-transformersjs-web-wasm"'
+pass 'Deno M2M100 model resident'
+
 curl -fsS "$G/health"|grep -Eq '"offline_ready"[[:space:]]*:[[:space:]]*true'
 pass 'gateway core health'
 curl -fsS "$G/v1/system/version"|grep -Fq "$EXPECTED_VERSION"
@@ -66,4 +69,4 @@ curl -fsS "$G/translate.html"|grep -q 'Tap microphone to start'
 curl -fsS "$G/settings.html"|grep -q '/v1/tts/preview'
 curl -fsS "$G/service-worker.js"|grep -q "mode==='navigate'"
 pass 'frontend assets + explicit audio arm'
-echo '[smoke] PASS — mic frontend + STT + translation + Supertonic + WebSocket verified'
+echo '[smoke] PASS — Deno translator + mic frontend + STT + translation + Supertonic + WebSocket verified'
