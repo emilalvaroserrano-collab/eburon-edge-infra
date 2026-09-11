@@ -1,5 +1,5 @@
 {
-  "eburon": "v0.3.0",
+  "eburon": "v0.3.1",
   "architecture": "android-arm64-termux",
   "translator": "huggingworld/m2m100_418M",
   "translator_revision": "48f06c0fec544323fcf1546e312a617d962d3653",
@@ -9,5 +9,6 @@
   "supertonic_model_revision": "724fb5abbf5502583fb520898d45929e62f02c0b",
   "piper": "catalogue-only",
   "kokoro": "disabled-until-verified",
+  "frontend_reference": "mastertrans/termux-hotfix-v6+v9",
   "package_ref": "source"
 }
