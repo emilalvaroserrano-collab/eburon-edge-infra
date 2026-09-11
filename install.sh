@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REPO="emilalvaroserrano-collab/eburon-edge-infra"
-RELEASE_REF="${EBURON_RELEASE_REF:-ce197c0594c7dbd912142bdb763fc9a5dc72df9e}"
-VERSION="v0.3.2"
+RELEASE_REF="${EBURON_RELEASE_REF:-3118df7e12deadd77820f6639a1ddcdccc49ce3c}"
+VERSION="v0.3.3"
 PACKAGE="eburon-edge-termux-arm64-${VERSION}.zip"
-PACKAGE_SHA256="f57f0a32e7269528ee910e579f62173b671c90c20ee592b0118eb28f463b2820"
+PACKAGE_SHA256="edb4496467814a1440e559477cb8fd526191d6b48faa0e8c2c20ac5336e9fd93"
 ROOT="${EBURON_ROOT:-$HOME/.eburon-edge}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
