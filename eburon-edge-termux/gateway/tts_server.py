@@ -8,14 +8,15 @@ from starlette.routing import Route
 from supertonic import TTS
 
 _tts=None
-_lock=threading.Lock()
+_init_lock=threading.Lock()
+_synth_lock=threading.Lock()
 _verified=False
 VOICES=["F1","F2","F3","F4","F5","M1","M2","M3","M4","M5"]
 
 def get_tts():
     global _tts
     if _tts is None:
-        with _lock:
+        with _init_lock:
             if _tts is None:
                 _tts=TTS(model_dir=os.environ["SUPERTONIC_MODEL_DIR"],auto_download=False)
     return _tts
@@ -46,7 +47,10 @@ async def synthesize(request:Request):
     steps=int(body.get("steps") or os.getenv("TTS_STEPS","4"))
     speed=float(body.get("speed") or os.getenv("TTS_SPEED","1.05"))
     try:
-        with _lock:
+        # ONNX sessions are shared by the TTS object. Serialize synthesis, but
+        # keep model initialization on a separate lock so the first request
+        # cannot deadlock by re-acquiring the same non-reentrant lock.
+        with _synth_lock:
             tts=get_tts(); style=tts.get_voice_style(voice_name=voice)
             audio,_=tts.synthesize(text,voice_style=style,total_steps=steps,speed=speed,lang=lang)
             out=wav_bytes(audio,tts.sample_rate); _verified=True
