@@ -1,0 +1,55 @@
+name: Deno M2M100 Runtime Test
+
+on:
+  push:
+    branches: [audit-v0.4.0-tested, main]
+    paths:
+      - 'eburon-edge-termux/translator/**'
+      - 'eburon-edge-termux/scripts/install_translator.sh'
+      - 'eburon-edge-termux/scripts/run_translator.sh'
+      - 'eburon-edge-termux/scripts/test_translator.sh'
+      - 'eburon-edge-termux/config/eburon.env'
+      - 'eburon-edge-termux/config/release.json'
+      - '.github/workflows/translator-runtime-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  translator-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Static audit checks
+        run: |
+          bash -n eburon-edge-termux/scripts/install_translator.sh \
+                  eburon-edge-termux/scripts/run_translator.sh \
+                  eburon-edge-termux/scripts/test_translator.sh
+          deno --version
+          python -m json.tool eburon-edge-termux/config/release.json >/dev/null
+          ! grep -R -nE 'onnxruntime-node|globalThis\.process[[:space:]]*=[[:space:]]*undefined' eburon-edge-termux/translator
+          grep -q 'deno-transformersjs-web-wasm' eburon-edge-termux/translator/server.mjs
+
+      - name: Cache pinned M2M100 weights
+        uses: actions/cache@v4
+        with:
+          path: eburon-edge-termux/models/m2m100-local
+          key: m2m100-418m-48f06c0fec544323fcf1546e312a617d962d3653-q8-v1
+
+      - name: Provision exact translator dependencies and model
+        run: |
+          chmod +x eburon-edge-termux/scripts/*.sh
+          export EBURON_ROOT="$GITHUB_WORKSPACE/eburon-edge-termux"
+          "$EBURON_ROOT/scripts/install_translator.sh"
+
+      - name: Real M2M100 Deno WebAssembly inference
+        run: |
+          export EBURON_ROOT="$GITHUB_WORKSPACE/eburon-edge-termux"
+          "$EBURON_ROOT/scripts/test_translator.sh"
