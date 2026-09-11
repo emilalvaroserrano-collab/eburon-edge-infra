@@ -1,15 +1,13 @@
 {
-  "eburon": "v0.2.0",
+  "eburon": "v0.3.0",
   "architecture": "android-arm64-termux",
-  "whisper_cpp": "927cfce34f31707e17f2bff35c349632fb9e2c3a",
-  "whisper_model": "ggml-base.bin",
-  "whisper_model_sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
   "translator": "huggingworld/m2m100_418M",
   "translator_revision": "48f06c0fec544323fcf1546e312a617d962d3653",
   "transformers_js": "4.2.0",
-  "onnxruntime_web": "1.26.0-dev.20260416-b7804b056c",
-  "supertonic_python_commit": "df0f9686dac7fbbde391b759e2ee5286a3737622",
+  "whisper_model": "ggml-base.bin",
+  "supertonic_commit": "df0f9686dac7fbbde391b759e2ee5286a3737622",
   "supertonic_model_revision": "724fb5abbf5502583fb520898d45929e62f02c0b",
-  "piper": "catalog-only",
-  "kokoro": "disabled-until-android-verified"
+  "piper": "catalogue-only",
+  "kokoro": "disabled-until-verified",
+  "package_ref": "source"
 }
