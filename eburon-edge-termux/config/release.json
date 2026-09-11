@@ -1,14 +1,17 @@
 {
-  "eburon": "v0.3.1",
+  "eburon": "v0.3.2",
   "architecture": "android-arm64-termux",
   "translator": "huggingworld/m2m100_418M",
   "translator_revision": "48f06c0fec544323fcf1546e312a617d962d3653",
+  "translator_delivery": "pinned-local-http-loopback",
   "transformers_js": "4.2.0",
+  "onnxruntime_web": "1.26.0-dev.20260416-b7804b056c",
   "whisper_model": "ggml-base.bin",
   "supertonic_commit": "df0f9686dac7fbbde391b759e2ee5286a3737622",
   "supertonic_model_revision": "724fb5abbf5502583fb520898d45929e62f02c0b",
   "piper": "catalogue-only",
   "kokoro": "disabled-until-verified",
-  "frontend_reference": "mastertrans/termux-hotfix-v6+v9",
+  "frontend_reference": "mastertrans-dual-translator-final-wiring",
+  "audio_flow": "mic->whisper->m2m100->supertonic-autoplay",
   "package_ref": "source"
 }
