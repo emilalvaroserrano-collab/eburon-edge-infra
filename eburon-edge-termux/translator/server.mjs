@@ -2,16 +2,12 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-// IMPORTANT: We deliberately use the Transformers.js browser/WASM bundle on
-// Android/Termux because onnxruntime-node has no Android npm binary. The v4
-// bundle still detects Node from globalThis.process at import time; if left
-// visible it selects the ignored onnxruntime-node backend and `device: wasm`
-// fails. Mask process only while the bundle initializes, then restore it for
-// the rest of this server. This also makes model-file loading use buffers
-// instead of Node's return-path fast path, which cannot return an HTTP model
-// path from our localhost model server.
+// Android/Termux has no supported onnxruntime-node npm binary, so we use the
+// Transformers.js browser/WASM bundle. Mask Node only while the bundle is
+// imported so Transformers.js selects ONNX Runtime Web. Restore process before
+// starting our localhost server.
 const NODE_PROCESS = globalThis.process;
 let HF;
 try {
@@ -30,16 +26,23 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_ROOT = PROC_ENV.M2M_LOCAL_ROOT || path.join(os.homedir(), ".eburon-edge", "models", "m2m100-local");
 const ORT_ROOT = path.join(HERE, "vendor", "onnxruntime-web", "dist");
 const LOOPBACK = `http://127.0.0.1:${PORT}`;
+const ORT_FILE_PREFIX = pathToFileURL(ORT_ROOT + path.sep).href;
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
+// Model JSON/tokenizer/ONNX bytes are deliberately fetched from this same
+// localhost process. This avoids Transformers.js' Node return-path handling.
 env.localModelPath = `${LOOPBACK}/models/`;
 env.useFS = false;
 env.useFSCache = false;
 env.useBrowserCache = false;
 env.useWasmCache = false;
 try {
-  env.backends.onnx.wasm.wasmPaths = `${LOOPBACK}/ort/`;
+  // IMPORTANT: do not use http:// here. ONNX Runtime Web dynamically imports
+  // its Emscripten .mjs factory. Under Termux Node, the native ESM loader only
+  // accepts file:/data: URLs. A file: prefix lets ORT import the local factory
+  // directly while the actual model assets remain served from localhost.
+  env.backends.onnx.wasm.wasmPaths = ORT_FILE_PREFIX;
   env.backends.onnx.wasm.numThreads = 1;
   env.backends.onnx.wasm.proxy = false;
 } catch {}
@@ -59,7 +62,6 @@ function contentType(file) {
   if (file.endsWith(".json")) return "application/json";
   if (file.endsWith(".wasm")) return "application/wasm";
   if (file.endsWith(".mjs") || file.endsWith(".js")) return "text/javascript";
-  if (file.endsWith(".model")) return "application/octet-stream";
   return "application/octet-stream";
 }
 
@@ -134,10 +136,11 @@ const server = http.createServer(async (req, res) => {
         engine: "m2m100",
         model: MODEL,
         revision: REVISION,
-        runtime: "transformersjs-web-wasm",
+        runtime: "transformersjs-web-wasm-file-factory",
         process_ready: true,
         model_loaded: translator !== null,
         model_root: LOCAL_ROOT,
+        ort_factory_root: ORT_FILE_PREFIX,
         init_error: initError,
         thinking: false,
       });
@@ -198,5 +201,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`M2M100 translator listening on 127.0.0.1:${PORT}`);
   console.log(`M2M100 local model root: ${LOCAL_ROOT}`);
+  console.log(`ORT wasm factory root: ${ORT_FILE_PREFIX}`);
   console.log("Transformers.js runtime: browser/WASM compatibility mode under Termux Node");
 });
