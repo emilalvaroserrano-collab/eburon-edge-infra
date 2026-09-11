@@ -1,0 +1,3 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+ROOT="${EBURON_ROOT:-$HOME/.eburon-edge}";M="$ROOT/models/ggml-base.bin";SHA="60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";mkdir -p "$ROOT/models";if [ -s "$M" ]&&printf '%s  %s\n' "$SHA" "$M"|sha256sum -c - >/dev/null 2>&1;then echo '  ✓ whisper base model verified';exit 0;fi;rm -f "$M.part";curl -fL --retry 6 --retry-delay 2 --retry-all-errors 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true' -o "$M.part";printf '%s  %s\n' "$SHA" "$M.part"|sha256sum -c - >/dev/null;mv "$M.part" "$M";echo '  ✓ whisper base model verified'
