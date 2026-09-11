@@ -12,7 +12,7 @@ case "$(uname -m)" in aarch64|arm64) ;; *) red 'Android ARM64 only.'; exit 1;; e
 mkdir -p "$ROOT" "$ROOT/logs" "$ROOT/run" "$ROOT/models"
 exec > >(tee -a "$ROOT/logs/install.log") 2>&1
 trap 'red "Install failed at line $LINENO. OFFLINE READY was not issued."; [ -x "$ROOT/status.sh" ] && "$ROOT/status.sh" || true' ERR
-blue 'Eburon Edge v0.3.2 — final local voice translator installer'
+blue 'Eburon Edge v0.3.3 — final local voice translator installer'
 blue 'Internet is required only for initial provisioning.'
 
 pkg update -y >/dev/null
@@ -104,8 +104,9 @@ download_m2m onnx/decoder_model_merged_quantized.onnx 330000000
 echo '  ✓ pinned M2M100 model files are fully local'
 
 probe_translator(){
-  local pid out
+  local pid out warmup_code
   : >"$ROOT/logs/translator-install.log"
+  : >"$ROOT/logs/translator-warmup.json"
   (
     cd "$ROOT/translator"
     EBURON_TRANSLATOR_PORT="$EBURON_TRANSLATOR_PORT" \
@@ -120,11 +121,25 @@ probe_translator(){
     sleep .5
   done
   curl -fsS --max-time 3 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health" >/dev/null || {
-    tail -n 120 "$ROOT/logs/translator-install.log" || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1;
+    red 'Translator HTTP process did not become ready.'
+    tail -n 160 "$ROOT/logs/translator-install.log" || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1;
   }
-  curl -fsS -X POST --max-time 900 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" >/dev/null || {
-    tail -n 160 "$ROOT/logs/translator-install.log" || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1;
+  curl -fsS --max-time 10 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/models/$M2M_MODEL/config.json" >/dev/null || {
+    red 'Translator cannot serve the pinned local M2M100 files.'
+    tail -n 160 "$ROOT/logs/translator-install.log" || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1;
   }
+  warmup_code="$(curl -sS -X POST --max-time 900 \
+    -o "$ROOT/logs/translator-warmup.json" -w '%{http_code}' \
+    "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" || true)"
+  if [ "$warmup_code" != '200' ]; then
+    red "M2M100 warm-up failed (HTTP ${warmup_code:-curl-error})."
+    cat "$ROOT/logs/translator-warmup.json" 2>/dev/null || true
+    echo
+    tail -n 200 "$ROOT/logs/translator-install.log" || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1
+  fi
   out="$(curl -fsS --max-time 240 -H 'content-type: application/json' \
     -d '{"text":"Good morning.","source_language":"en","target_language":"nl"}' \
     "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/v1/translate")"
@@ -133,7 +148,7 @@ probe_translator(){
   }
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  echo '  ✓ local M2M100 EN→NL inference verified'
+  echo '  ✓ local M2M100 browser/WASM EN→NL inference verified'
 }
 probe_translator
 rm -f "$ROOT/bin/llama-server" "$ROOT/models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf" 2>/dev/null || true
