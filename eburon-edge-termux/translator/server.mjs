@@ -1,61 +1,62 @@
-import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+// Eburon translation-only server.
+//
+// IMPORTANT: this process intentionally runs under Deno, not Node.js.
+// Transformers.js 4.x has a dedicated Deno web-runtime path which selects
+// ONNX Runtime Web without pretending Node is a browser. Android/Termux does
+// not have a supported onnxruntime-node npm binary, so Deno + ORT Web/WASM is
+// the supported runtime shape for this appliance.
 
-// Android/Termux has no supported onnxruntime-node npm binary, so we use the
-// Transformers.js browser/WASM bundle. Mask Node only while the bundle is
-// imported so Transformers.js selects ONNX Runtime Web. Restore process before
-// starting our localhost server.
-const NODE_PROCESS = globalThis.process;
-let HF;
-try {
-  globalThis.process = undefined;
-  HF = await import("./vendor/transformers/dist/transformers.js");
-} finally {
-  globalThis.process = NODE_PROCESS;
-}
-const { env, pipeline } = HF;
-
-const PROC_ENV = NODE_PROCESS?.env || {};
-const PORT = Number(PROC_ENV.EBURON_TRANSLATOR_PORT || 8851);
-const MODEL = PROC_ENV.M2M_MODEL || PROC_ENV.EBURON_TRANSLATOR_MODEL || "huggingworld/m2m100_418M";
-const REVISION = PROC_ENV.M2M_REVISION || "48f06c0fec544323fcf1546e312a617d962d3653";
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_ROOT = PROC_ENV.M2M_LOCAL_ROOT || path.join(os.homedir(), ".eburon-edge", "models", "m2m100-local");
-const ORT_ROOT = path.join(HERE, "vendor", "onnxruntime-web", "dist");
+const PORT = Number(Deno.env.get("EBURON_TRANSLATOR_PORT") || "8851");
+const MODEL = Deno.env.get("M2M_MODEL") || Deno.env.get("EBURON_TRANSLATOR_MODEL") || "huggingworld/m2m100_418M";
+const REVISION = Deno.env.get("M2M_REVISION") || "48f06c0fec544323fcf1546e312a617d962d3653";
+const HOME = Deno.env.get("HOME") || "/data/data/com.termux/files/home";
+const LOCAL_ROOT = Deno.env.get("M2M_LOCAL_ROOT") || `${HOME}/.eburon-edge/models/m2m100-local`;
+const HERE_URL = new URL("./", import.meta.url);
+const HERE = decodeURIComponent(HERE_URL.pathname).replace(/\/$/, "");
+const ORT_ROOT = `${HERE}/vendor/onnxruntime-web/dist`;
+const ORT_MJS_URL = new URL("./vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs", import.meta.url).href;
 const LOOPBACK = `http://127.0.0.1:${PORT}`;
-const ORT_FILE_PREFIX = pathToFileURL(ORT_ROOT + path.sep).href;
+const ORT_WASM_URL = `${LOOPBACK}/ort/ort-wasm-simd-threaded.jsep.wasm`;
+
+const HF = await import("./vendor/transformers/dist/transformers.js");
+const { env, pipeline } = HF;
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
-// Model JSON/tokenizer/ONNX bytes are deliberately fetched from this same
-// localhost process. This avoids Transformers.js' Node return-path handling.
 env.localModelPath = `${LOOPBACK}/models/`;
 env.useFS = false;
 env.useFSCache = false;
 env.useBrowserCache = false;
 env.useWasmCache = false;
-try {
-  // IMPORTANT: do not use http:// here. ONNX Runtime Web dynamically imports
-  // its Emscripten .mjs factory. Under Termux Node, the native ESM loader only
-  // accepts file:/data: URLs. A file: prefix lets ORT import the local factory
-  // directly while the actual model assets remain served from localhost.
-  env.backends.onnx.wasm.wasmPaths = ORT_FILE_PREFIX;
-  env.backends.onnx.wasm.numThreads = 1;
-  env.backends.onnx.wasm.proxy = false;
-} catch {}
+
+// Use the local Emscripten module factory from file:, but serve the WASM bytes
+// from loopback HTTP. This avoids Node's unsupported http: ESM import and also
+// avoids relying on fetch(file://...), while keeping every runtime byte local.
+env.backends.onnx.wasm.wasmPaths = {
+  mjs: ORT_MJS_URL,
+  wasm: ORT_WASM_URL,
+};
+env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.proxy = false;
 
 let translator = null;
 let initPromise = null;
 let initError = null;
 
-function safeJoin(root, relative) {
-  const target = path.resolve(root, relative);
-  const base = path.resolve(root);
-  if (target !== base && !target.startsWith(base + path.sep)) return null;
-  return target;
+function json(status, obj) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+}
+
+function safeLocalPath(root, relative) {
+  let decoded;
+  try { decoded = decodeURIComponent(relative); } catch { return null; }
+  if (!decoded || decoded.includes("\0") || decoded.startsWith("/")) return null;
+  const parts = decoded.split("/");
+  if (parts.some((p) => !p || p === "." || p === "..")) return null;
+  return `${root.replace(/\/+$/, "")}/${parts.join("/")}`;
 }
 
 function contentType(file) {
@@ -65,20 +66,26 @@ function contentType(file) {
   return "application/octet-stream";
 }
 
-function serveLocalFile(res, root, relative) {
-  let decoded;
-  try { decoded = decodeURIComponent(relative); } catch { res.writeHead(400); res.end(); return; }
-  const target = safeJoin(root, decoded);
-  if (!target) { res.writeHead(403); res.end(); return; }
-  let stat;
-  try { stat = fs.statSync(target); } catch { res.writeHead(404); res.end(); return; }
-  if (!stat.isFile()) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, {
-    "content-type": contentType(target),
-    "content-length": stat.size,
-    "cache-control": "public, max-age=31536000, immutable",
-  });
-  fs.createReadStream(target).pipe(res);
+async function serveFile(root, relative) {
+  const target = safeLocalPath(root, relative);
+  if (!target) return new Response("Forbidden", { status: 403 });
+  try {
+    const file = await Deno.open(target, { read: true });
+    const stat = await file.stat();
+    if (!stat.isFile) { file.close(); return new Response("Not found", { status: 404 }); }
+    return new Response(file.readable, {
+      status: 200,
+      headers: {
+        "content-type": contentType(target),
+        "content-length": String(stat.size),
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) return new Response("Not found", { status: 404 });
+    console.error(`File serve failure for ${target}:`, e);
+    return new Response("File error", { status: 500 });
+  }
 }
 
 async function init() {
@@ -86,65 +93,49 @@ async function init() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     try {
-      translator = await pipeline("translation", MODEL, {
+      const t = await pipeline("translation", MODEL, {
         dtype: "q8",
         device: "wasm",
         local_files_only: true,
       });
+      translator = t;
       initError = null;
-      return translator;
+      return t;
     } catch (e) {
       initError = String(e?.stack || e);
-      console.error("M2M100 initialization failed:\n" + initError);
       initPromise = null;
+      console.error("M2M100 initialization failed:\n" + initError);
       throw e;
     }
   })();
   return initPromise;
 }
 
-function json(res, status, obj) {
-  const b = Buffer.from(JSON.stringify(obj));
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": b.length,
-    "cache-control": "no-store",
-  });
-  res.end(b);
-}
-
-async function body(req) {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-}
-
-const server = http.createServer(async (req, res) => {
+async function handler(req) {
+  const u = new URL(req.url);
   try {
-    const u = new URL(req.url || "/", LOOPBACK);
     if (req.method === "GET" && u.pathname.startsWith("/models/")) {
-      serveLocalFile(res, LOCAL_ROOT, u.pathname.slice("/models/".length));
-      return;
+      return await serveFile(LOCAL_ROOT, u.pathname.slice("/models/".length));
     }
     if (req.method === "GET" && u.pathname.startsWith("/ort/")) {
-      serveLocalFile(res, ORT_ROOT, u.pathname.slice("/ort/".length));
-      return;
+      return await serveFile(ORT_ROOT, u.pathname.slice("/ort/".length));
     }
     if (req.method === "GET" && u.pathname === "/health") {
-      json(res, 200, {
+      return json(200, {
         status: "ready",
         engine: "m2m100",
         model: MODEL,
         revision: REVISION,
-        runtime: "transformersjs-web-wasm-file-factory",
+        runtime: "deno-transformersjs-web-wasm",
+        deno_version: Deno.version.deno,
         process_ready: true,
         model_loaded: translator !== null,
         model_root: LOCAL_ROOT,
-        ort_factory_root: ORT_FILE_PREFIX,
+        ort_mjs: ORT_MJS_URL,
+        ort_wasm: ORT_WASM_URL,
         init_error: initError,
         thinking: false,
       });
-      return;
     }
     if (req.method === "POST" && u.pathname === "/warmup") {
       const t = await init();
@@ -157,19 +148,16 @@ const server = http.createServer(async (req, res) => {
       });
       const sample = String(out?.[0]?.translation_text || "").trim();
       if (!sample) throw new Error("M2M100 warm-up returned empty text");
-      json(res, 200, { status: "ready", model_loaded: true, sample });
-      return;
+      return json(200, { status: "ready", model_loaded: true, sample });
     }
     if (req.method === "POST" && u.pathname === "/v1/translate") {
-      const b = await body(req);
-      const text = String(b.text || "").trim();
-      const src = String(b.source_language || b.src_lang || "en").split(/[-_]/)[0].toLowerCase();
-      const tgt = String(b.target_language || b.tgt_lang || "nl").split(/[-_]/)[0].toLowerCase();
-      if (!text) { json(res, 400, { error: "text is required" }); return; }
-      if (src === tgt) {
-        json(res, 200, { text, source_language: src, target_language: tgt, engine: "m2m100", latency_ms: 0 });
-        return;
-      }
+      let b;
+      try { b = await req.json(); } catch { return json(400, { error: "invalid json" }); }
+      const text = String(b?.text || "").trim();
+      const src = String(b?.source_language || b?.src_lang || "en").split(/[-_]/)[0].toLowerCase();
+      const tgt = String(b?.target_language || b?.tgt_lang || "nl").split(/[-_]/)[0].toLowerCase();
+      if (!text) return json(400, { error: "text is required" });
+      if (src === tgt) return json(200, { text, source_language: src, target_language: tgt, engine: "m2m100", latency_ms: 0 });
       const t = await init();
       const started = performance.now();
       const out = await t(text, {
@@ -181,26 +169,26 @@ const server = http.createServer(async (req, res) => {
       });
       const translated = String(out?.[0]?.translation_text || "").trim();
       if (!translated) throw new Error("translation engine returned empty text");
-      json(res, 200, {
+      return json(200, {
         text: translated,
         source_language: src,
         target_language: tgt,
         engine: "m2m100",
         latency_ms: Math.round(performance.now() - started),
       });
-      return;
     }
-    json(res, 404, { error: "not found" });
+    return json(404, { error: "not found" });
   } catch (e) {
     const detail = String(e?.stack || e);
     console.error("M2M100 request failed:\n" + detail);
-    json(res, 500, { error: String(e?.message || e), detail });
+    return json(500, { error: String(e?.message || e), detail });
   }
-});
+}
 
-server.listen(PORT, "127.0.0.1", () => {
+Deno.serve({ hostname: "127.0.0.1", port: PORT, onListen: () => {
   console.log(`M2M100 translator listening on 127.0.0.1:${PORT}`);
   console.log(`M2M100 local model root: ${LOCAL_ROOT}`);
-  console.log(`ORT wasm factory root: ${ORT_FILE_PREFIX}`);
-  console.log("Transformers.js runtime: browser/WASM compatibility mode under Termux Node");
-});
+  console.log(`ORT module factory: ${ORT_MJS_URL}`);
+  console.log(`ORT WASM bytes: ${ORT_WASM_URL}`);
+  console.log(`Runtime: Deno ${Deno.version.deno} + Transformers.js Web/WASM`);
+}}, handler);
