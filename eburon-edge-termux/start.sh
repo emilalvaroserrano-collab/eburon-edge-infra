@@ -1,12 +1,44 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
-ROOT="${EBURON_ROOT:-$HOME/.eburon-edge}"; export EBURON_ROOT="$ROOT"; source "$ROOT/config/eburon.env"; mkdir -p "$ROOT/logs" "$ROOT/run"; command -v termux-wake-lock >/dev/null 2>&1&&termux-wake-lock||true
-EXPECTED_VERSION="$(python -c 'import json,os;print(json.load(open(os.path.expanduser("~/.eburon-edge/config/release.json")))["eburon"])')"
-ok(){ curl -fsS --connect-timeout 1 --max-time 3 "$1" >/dev/null 2>&1; }; startp(){ local n="$1" c="$2"; echo "Starting $n…"; :>"$ROOT/logs/$n.log"; nohup bash -lc "$c" >>"$ROOT/logs/$n.log" 2>&1 & echo $!>"$ROOT/run/$n.pid"; }; waitp(){ local n="$1" u="$2" m="$3" p; p="$(cat "$ROOT/run/$n.pid" 2>/dev/null||true)"; for _ in $(seq 1 "$m"); do ok "$u"&&{ echo "  ✓ $n ready";return;}; [ -n "$p" ]&&! kill -0 "$p" 2>/dev/null&&break;sleep 1;done;echo "ERROR: $n failed";tail -n 80 "$ROOT/logs/$n.log" 2>/dev/null||true;return 1; }
-if ! ok "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health";then startp translator "cd '$ROOT/translator'; EBURON_TRANSLATOR_PORT='$EBURON_TRANSLATOR_PORT' EBURON_TRANSLATOR_CACHE='$ROOT/models/m2m100-cache' EBURON_OFFLINE=1 M2M_MODEL='$M2M_MODEL' M2M_REVISION='$M2M_REVISION' exec node server.mjs";waitp translator "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health" 40;fi
-curl -fsS -X POST --max-time 600 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" >/dev/null||{ tail -n 100 "$ROOT/logs/translator.log" 2>/dev/null||true;exit 1;};echo '  ✓ translator model resident'
-if ! ok "http://127.0.0.1:$EBURON_STT_PORT/";then startp stt "exec '$ROOT/bin/whisper-server' --host 127.0.0.1 --port '$EBURON_STT_PORT' -m '$ROOT/models/$WHISPER_MODEL_NAME' -l auto -t '$WHISPER_THREADS' --convert -ng -sns";waitp stt "http://127.0.0.1:$EBURON_STT_PORT/" 90;fi
-if ! ok "http://127.0.0.1:$EBURON_TTS_PORT/v1/health";then startp supertonic "source '$ROOT/venv-tts/bin/activate'; cd '$ROOT'; SUPERTONIC_MODEL_DIR='$ROOT/models/supertonic-3' exec uvicorn gateway.tts_server:app --host 127.0.0.1 --port '$EBURON_TTS_PORT' --log-level warning";waitp supertonic "http://127.0.0.1:$EBURON_TTS_PORT/v1/health" 60;fi
-if ! ok "http://127.0.0.1:$EBURON_PIPER_PORT/v1/voices";then startp piper "source '$ROOT/venv-gateway/bin/activate'; cd '$ROOT'; exec uvicorn gateway.piper_server:app --host 127.0.0.1 --port '$EBURON_PIPER_PORT' --log-level warning";waitp piper "http://127.0.0.1:$EBURON_PIPER_PORT/v1/voices" 20||true;fi
-if ! ok "http://127.0.0.1:$EBURON_GATEWAY_PORT/health";then startp gateway "source '$ROOT/venv-gateway/bin/activate'; cd '$ROOT'; exec uvicorn gateway.server:app --host 127.0.0.1 --port '$EBURON_GATEWAY_PORT' --log-level warning";waitp gateway "http://127.0.0.1:$EBURON_GATEWAY_PORT/health" 45;fi
-H="$(curl -fsS "http://127.0.0.1:$EBURON_GATEWAY_PORT/health")";printf '%s' "$H"|grep -Eq '"offline_ready"[[:space:]]*:[[:space:]]*true'||{ echo "$H";exit 1;};V="$(curl -fsS "http://127.0.0.1:$EBURON_GATEWAY_PORT/v1/system/version")";printf '%s' "$V"|grep -Fq "$EXPECTED_VERSION"||{ echo 'release mismatch';echo "$V";exit 1;};echo "Eburon Edge $EXPECTED_VERSION READY at http://127.0.0.1:$EBURON_GATEWAY_PORT"
+ROOT="${EBURON_ROOT:-$HOME/.eburon-edge}"
+export EBURON_ROOT="$ROOT"
+source "$ROOT/config/eburon.env"
+mkdir -p "$ROOT/logs" "$ROOT/run"
+command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+EXPECTED_VERSION="$(python -c 'import json,os;print(json.load(open(os.path.join(os.environ["EBURON_ROOT"],"config","release.json")))["eburon"])')"
+ok(){ curl -fsS --connect-timeout 1 --max-time 3 "$1" >/dev/null 2>&1; }
+startp(){ local n="$1" c="$2"; echo "Starting $n…"; :>"$ROOT/logs/$n.log"; nohup bash -lc "$c" >>"$ROOT/logs/$n.log" 2>&1 & echo $!>"$ROOT/run/$n.pid"; }
+waitp(){ local n="$1" u="$2" m="$3" p; p="$(cat "$ROOT/run/$n.pid" 2>/dev/null||true)"; for _ in $(seq 1 "$m"); do ok "$u"&&{ echo "  ✓ $n ready";return;}; [ -n "$p" ]&&! kill -0 "$p" 2>/dev/null&&break;sleep 1;done;echo "ERROR: $n failed";tail -n 100 "$ROOT/logs/$n.log" 2>/dev/null||true;return 1; }
+
+if ! ok "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health"; then
+  startp translator "cd '$ROOT/translator'; EBURON_TRANSLATOR_PORT='$EBURON_TRANSLATOR_PORT' M2M_MODEL='$M2M_MODEL' M2M_REVISION='$M2M_REVISION' M2M_LOCAL_ROOT='$ROOT/models/m2m100-local' exec node server.mjs"
+  waitp translator "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health" 45
+fi
+curl -fsS -X POST --max-time 900 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" >/dev/null || { echo 'ERROR: translator local warm-up failed.'; tail -n 160 "$ROOT/logs/translator.log" 2>/dev/null||true; exit 1; }
+echo '  ✓ translator model resident'
+
+if ! ok "http://127.0.0.1:$EBURON_STT_PORT/"; then
+  startp stt "exec '$ROOT/bin/whisper-server' --host 127.0.0.1 --port '$EBURON_STT_PORT' -m '$ROOT/models/$WHISPER_MODEL_NAME' -l auto -t '$WHISPER_THREADS' --convert -ng -sns"
+  waitp stt "http://127.0.0.1:$EBURON_STT_PORT/" 90
+fi
+
+if ! ok "http://127.0.0.1:$EBURON_TTS_PORT/v1/health"; then
+  startp supertonic "source '$ROOT/venv-tts/bin/activate'; cd '$ROOT'; SUPERTONIC_MODEL_DIR='$ROOT/models/supertonic-3' exec uvicorn gateway.tts_server:app --host 127.0.0.1 --port '$EBURON_TTS_PORT' --log-level warning"
+  waitp supertonic "http://127.0.0.1:$EBURON_TTS_PORT/v1/health" 60
+fi
+
+if ! ok "http://127.0.0.1:$EBURON_PIPER_PORT/v1/voices"; then
+  startp piper "source '$ROOT/venv-gateway/bin/activate'; cd '$ROOT'; exec uvicorn gateway.piper_server:app --host 127.0.0.1 --port '$EBURON_PIPER_PORT' --log-level warning"
+  waitp piper "http://127.0.0.1:$EBURON_PIPER_PORT/v1/voices" 20 || true
+fi
+
+if ! ok "http://127.0.0.1:$EBURON_GATEWAY_PORT/health"; then
+  startp gateway "source '$ROOT/venv-gateway/bin/activate'; cd '$ROOT'; exec uvicorn gateway.server:app --host 127.0.0.1 --port '$EBURON_GATEWAY_PORT' --log-level warning"
+  waitp gateway "http://127.0.0.1:$EBURON_GATEWAY_PORT/health" 45
+fi
+
+H="$(curl -fsS "http://127.0.0.1:$EBURON_GATEWAY_PORT/health")"
+printf '%s' "$H"|grep -Eq '"offline_ready"[[:space:]]*:[[:space:]]*true'||{ echo "$H";exit 1; }
+V="$(curl -fsS "http://127.0.0.1:$EBURON_GATEWAY_PORT/v1/system/version")"
+printf '%s' "$V"|grep -Fq "$EXPECTED_VERSION"||{ echo 'release mismatch';echo "$V";exit 1; }
+echo "Eburon Edge $EXPECTED_VERSION READY at http://127.0.0.1:$EBURON_GATEWAY_PORT"
