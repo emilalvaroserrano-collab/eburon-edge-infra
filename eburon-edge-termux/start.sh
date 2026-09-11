@@ -8,13 +8,15 @@ command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
 EXPECTED_VERSION="$(python -c 'import json,os;print(json.load(open(os.path.join(os.environ["EBURON_ROOT"],"config","release.json")))["eburon"])')"
 ok(){ curl -fsS --connect-timeout 1 --max-time 3 "$1" >/dev/null 2>&1; }
 startp(){ local n="$1" c="$2"; echo "Starting $n…"; :>"$ROOT/logs/$n.log"; nohup bash -lc "$c" >>"$ROOT/logs/$n.log" 2>&1 & echo $!>"$ROOT/run/$n.pid"; }
-waitp(){ local n="$1" u="$2" m="$3" p; p="$(cat "$ROOT/run/$n.pid" 2>/dev/null||true)"; for _ in $(seq 1 "$m"); do ok "$u"&&{ echo "  ✓ $n ready";return;}; [ -n "$p" ]&&! kill -0 "$p" 2>/dev/null&&break;sleep 1;done;echo "ERROR: $n failed";tail -n 100 "$ROOT/logs/$n.log" 2>/dev/null||true;return 1; }
+waitp(){ local n="$1" u="$2" m="$3" p; p="$(cat "$ROOT/run/$n.pid" 2>/dev/null||true)"; for _ in $(seq 1 "$m"); do ok "$u"&&{ echo "  ✓ $n ready";return;}; [ -n "$p" ]&&! kill -0 "$p" 2>/dev/null&&break;sleep 1;done;echo "ERROR: $n failed";tail -n 120 "$ROOT/logs/$n.log" 2>/dev/null||true;return 1; }
 
 if ! ok "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health"; then
-  startp translator "cd '$ROOT/translator'; EBURON_TRANSLATOR_PORT='$EBURON_TRANSLATOR_PORT' M2M_MODEL='$M2M_MODEL' M2M_REVISION='$M2M_REVISION' M2M_LOCAL_ROOT='$ROOT/models/m2m100-local' exec node server.mjs"
-  waitp translator "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health" 45
+  startp translator "EBURON_ROOT='$ROOT' exec '$ROOT/scripts/run_translator.sh'"
+  waitp translator "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health" 60
 fi
-curl -fsS -X POST --max-time 900 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" >/dev/null || { echo 'ERROR: translator local warm-up failed.'; tail -n 160 "$ROOT/logs/translator.log" 2>/dev/null||true; exit 1; }
+TH="$(curl -fsS "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/health")"
+printf '%s' "$TH" | grep -q '"runtime":"deno-transformersjs-web-wasm"' || { echo 'ERROR: unexpected translator runtime'; echo "$TH"; exit 1; }
+curl -fsS -X POST --max-time 1200 "http://127.0.0.1:$EBURON_TRANSLATOR_PORT/warmup" >/dev/null || { echo 'ERROR: translator local warm-up failed.'; tail -n 200 "$ROOT/logs/translator.log" 2>/dev/null||true; exit 1; }
 echo '  ✓ translator model resident'
 
 if ! ok "http://127.0.0.1:$EBURON_STT_PORT/"; then
