@@ -2,21 +2,23 @@
 
 Canonical Android ARM64 appliance source for the Eburon Dual Translator.
 
-## v0.3.0 release
+## v0.3.1 release
 
-- `dist/EburonEdge-v0.3.0.apk` — Android launcher for the localhost appliance
-- `dist/eburon-edge-termux-arm64-v0.3.0.zip` — canonical Termux runtime package
+- `dist/EburonEdge-v0.3.1.apk` — Android launcher for the localhost appliance
+- `dist/eburon-edge-termux-arm64-v0.3.1.zip` — canonical Termux runtime package
 - `dist/SHA256SUMS` — release integrity hashes
+
+The dual-translator frontend is now based on the proven `mastertrans` standby/streaming/settings UI, adapted to the current local M2M100 + whisper.cpp + Supertonic backend and the `translate` WebSocket stage naming.
 
 ## Final one-command Termux installer
 
 Paste this exact command into Termux on the Android ARM64 device:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/emilalvaroserrano-collab/eburon-edge-infra/11e11210de7b62126cef14ce0684ed21bca09cb7/install.sh?cb=$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/emilalvaroserrano-collab/eburon-edge-infra/9b864250ec9f0f9753479d026b0e150cdd9e89cc/install.sh?cb=$(date +%s)" | bash
 ```
 
-This installer is pinned to the immutable v0.3.0 release package and verifies the package SHA-256 before extraction and provisioning.
+This installer is pinned to the immutable v0.3.1 release package and verifies the package SHA-256 before extraction and provisioning.
 
 Core runtime:
 - whisper.cpp STT on `127.0.0.1:8852`
