@@ -1,9 +1,9 @@
 {
-  "eburon": "v0.3.2",
+  "eburon": "v0.3.3",
   "architecture": "android-arm64-termux",
   "translator": "huggingworld/m2m100_418M",
   "translator_revision": "48f06c0fec544323fcf1546e312a617d962d3653",
-  "translator_delivery": "pinned-local-http-loopback",
+  "translator_delivery": "pinned-local-http-loopback-browser-wasm",
   "transformers_js": "4.2.0",
   "onnxruntime_web": "1.26.0-dev.20260416-b7804b056c",
   "whisper_model": "ggml-base.bin",
@@ -13,5 +13,6 @@
   "kokoro": "disabled-until-verified",
   "frontend_reference": "mastertrans-dual-translator-final-wiring",
   "audio_flow": "mic->whisper->m2m100->supertonic-autoplay",
+  "runtime_fix": "mask-node-during-transformers-web-import",
   "package_ref": "source"
 }
