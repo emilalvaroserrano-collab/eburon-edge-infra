@@ -8,6 +8,16 @@ Canonical Android ARM64 appliance source for the Eburon Dual Translator.
 - `dist/eburon-edge-termux-arm64-v0.3.0.zip` — canonical Termux runtime package
 - `dist/SHA256SUMS` — release integrity hashes
 
+## Final one-command Termux installer
+
+Paste this exact command into Termux on the Android ARM64 device:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/emilalvaroserrano-collab/eburon-edge-infra/11e11210de7b62126cef14ce0684ed21bca09cb7/install.sh?cb=$(date +%s)" | bash
+```
+
+This installer is pinned to the immutable v0.3.0 release package and verifies the package SHA-256 before extraction and provisioning.
+
 Core runtime:
 - whisper.cpp STT on `127.0.0.1:8852`
 - M2M100 translation-only WebAssembly on `127.0.0.1:8851`
