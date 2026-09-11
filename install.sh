@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REPO="emilalvaroserrano-collab/eburon-edge-infra"
-RELEASE_REF="${EBURON_RELEASE_REF:-e852a3e7163e69f5a13e99d68858ebe72ce47aae}"
-VERSION="v0.3.1"
+RELEASE_REF="${EBURON_RELEASE_REF:-ce197c0594c7dbd912142bdb763fc9a5dc72df9e}"
+VERSION="v0.3.2"
 PACKAGE="eburon-edge-termux-arm64-${VERSION}.zip"
-PACKAGE_SHA256="8722e11c59c8ff06168f2515cee74c030aa390fe1ffabf145c794d494c172e04"
+PACKAGE_SHA256="f57f0a32e7269528ee910e579f62173b671c90c20ee592b0118eb28f463b2820"
 ROOT="${EBURON_ROOT:-$HOME/.eburon-edge}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -17,24 +17,19 @@ case "${PREFIX:-}" in
   *com.termux*) ;;
   *) fail 'Run this inside Termux.' ;;
 esac
-
 case "$(uname -m)" in
   aarch64|arm64) ;;
   *) fail "This release targets Android ARM64 only. Detected: $(uname -m)" ;;
 esac
 
-info "Eburon Edge ${VERSION} — one-command installer"
+info "Eburon Edge ${VERSION} — final one-command installer"
 info "Internet is required only for initial provisioning."
 
-# Termux splits the OpenSSL command-line binary into openssl-tool.
-# The payload verifies npm tarball integrity with the `openssl` command,
-# so install the CLI explicitly before the payload starts.
-pkg install -y curl unzip coreutils openssl-tool >/dev/null
-command -v openssl >/dev/null 2>&1 || fail 'Termux OpenSSL CLI is unavailable after installing openssl-tool.'
+pkg install -y curl unzip coreutils >/dev/null
 
 BASE="https://raw.githubusercontent.com/${REPO}/${RELEASE_REF}/dist"
 info "Downloading ${PACKAGE}…"
-curl -fLsS --retry 6 --retry-delay 2 --retry-all-errors \
+curl -fLsS --retry 8 --retry-delay 3 --retry-all-errors \
   "$BASE/$PACKAGE" -o "$TMP/$PACKAGE"
 
 printf '%s  %s\n' "$PACKAGE_SHA256" "$TMP/$PACKAGE" | sha256sum -c - >/dev/null \
