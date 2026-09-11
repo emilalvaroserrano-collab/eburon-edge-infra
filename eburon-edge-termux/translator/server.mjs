@@ -3,22 +3,45 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { env, pipeline } from "./vendor/transformers/dist/transformers.js";
 
-const PORT = Number(process.env.EBURON_TRANSLATOR_PORT || 8851);
-const MODEL = process.env.M2M_MODEL || process.env.EBURON_TRANSLATOR_MODEL || "huggingworld/m2m100_418M";
-const REVISION = process.env.M2M_REVISION || "48f06c0fec544323fcf1546e312a617d962d3653";
+// IMPORTANT: We deliberately use the Transformers.js browser/WASM bundle on
+// Android/Termux because onnxruntime-node has no Android npm binary. The v4
+// bundle still detects Node from globalThis.process at import time; if left
+// visible it selects the ignored onnxruntime-node backend and `device: wasm`
+// fails. Mask process only while the bundle initializes, then restore it for
+// the rest of this server. This also makes model-file loading use buffers
+// instead of Node's return-path fast path, which cannot return an HTTP model
+// path from our localhost model server.
+const NODE_PROCESS = globalThis.process;
+let HF;
+try {
+  globalThis.process = undefined;
+  HF = await import("./vendor/transformers/dist/transformers.js");
+} finally {
+  globalThis.process = NODE_PROCESS;
+}
+const { env, pipeline } = HF;
+
+const PROC_ENV = NODE_PROCESS?.env || {};
+const PORT = Number(PROC_ENV.EBURON_TRANSLATOR_PORT || 8851);
+const MODEL = PROC_ENV.M2M_MODEL || PROC_ENV.EBURON_TRANSLATOR_MODEL || "huggingworld/m2m100_418M";
+const REVISION = PROC_ENV.M2M_REVISION || "48f06c0fec544323fcf1546e312a617d962d3653";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_ROOT = process.env.M2M_LOCAL_ROOT || path.join(os.homedir(), ".eburon-edge", "models", "m2m100-local");
+const LOCAL_ROOT = PROC_ENV.M2M_LOCAL_ROOT || path.join(os.homedir(), ".eburon-edge", "models", "m2m100-local");
 const ORT_ROOT = path.join(HERE, "vendor", "onnxruntime-web", "dist");
+const LOOPBACK = `http://127.0.0.1:${PORT}`;
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
-env.localModelPath = `http://127.0.0.1:${PORT}/models/`;
+env.localModelPath = `${LOOPBACK}/models/`;
+env.useFS = false;
+env.useFSCache = false;
 env.useBrowserCache = false;
+env.useWasmCache = false;
 try {
-  env.backends.onnx.wasm.wasmPaths = `http://127.0.0.1:${PORT}/ort/`;
+  env.backends.onnx.wasm.wasmPaths = `${LOOPBACK}/ort/`;
   env.backends.onnx.wasm.numThreads = 1;
+  env.backends.onnx.wasm.proxy = false;
 } catch {}
 
 let translator = null;
@@ -36,24 +59,24 @@ function contentType(file) {
   if (file.endsWith(".json")) return "application/json";
   if (file.endsWith(".wasm")) return "application/wasm";
   if (file.endsWith(".mjs") || file.endsWith(".js")) return "text/javascript";
+  if (file.endsWith(".model")) return "application/octet-stream";
   return "application/octet-stream";
 }
 
-function serveLocalFile(req, res, root, relative) {
+function serveLocalFile(res, root, relative) {
   let decoded;
-  try { decoded = decodeURIComponent(relative); } catch { res.writeHead(400); res.end(); return true; }
+  try { decoded = decodeURIComponent(relative); } catch { res.writeHead(400); res.end(); return; }
   const target = safeJoin(root, decoded);
-  if (!target) { res.writeHead(403); res.end(); return true; }
+  if (!target) { res.writeHead(403); res.end(); return; }
   let stat;
-  try { stat = fs.statSync(target); } catch { res.writeHead(404); res.end(); return true; }
-  if (!stat.isFile()) { res.writeHead(404); res.end(); return true; }
+  try { stat = fs.statSync(target); } catch { res.writeHead(404); res.end(); return; }
+  if (!stat.isFile()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, {
     "content-type": contentType(target),
     "content-length": stat.size,
     "cache-control": "public, max-age=31536000, immutable",
   });
   fs.createReadStream(target).pipe(res);
-  return true;
 }
 
 async function init() {
@@ -70,6 +93,7 @@ async function init() {
       return translator;
     } catch (e) {
       initError = String(e?.stack || e);
+      console.error("M2M100 initialization failed:\n" + initError);
       initPromise = null;
       throw e;
     }
@@ -95,12 +119,14 @@ async function body(req) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    const u = new URL(req.url || "/", `http://127.0.0.1:${PORT}`);
+    const u = new URL(req.url || "/", LOOPBACK);
     if (req.method === "GET" && u.pathname.startsWith("/models/")) {
-      return serveLocalFile(req, res, LOCAL_ROOT, u.pathname.slice("/models/".length));
+      serveLocalFile(res, LOCAL_ROOT, u.pathname.slice("/models/".length));
+      return;
     }
     if (req.method === "GET" && u.pathname.startsWith("/ort/")) {
-      return serveLocalFile(req, res, ORT_ROOT, u.pathname.slice("/ort/".length));
+      serveLocalFile(res, ORT_ROOT, u.pathname.slice("/ort/".length));
+      return;
     }
     if (req.method === "GET" && u.pathname === "/health") {
       json(res, 200, {
@@ -108,6 +134,7 @@ const server = http.createServer(async (req, res) => {
         engine: "m2m100",
         model: MODEL,
         revision: REVISION,
+        runtime: "transformersjs-web-wasm",
         process_ready: true,
         model_loaded: translator !== null,
         model_root: LOCAL_ROOT,
@@ -162,11 +189,14 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: "not found" });
   } catch (e) {
-    json(res, 500, { error: String(e?.message || e) });
+    const detail = String(e?.stack || e);
+    console.error("M2M100 request failed:\n" + detail);
+    json(res, 500, { error: String(e?.message || e), detail });
   }
 });
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`M2M100 translator listening on 127.0.0.1:${PORT}`);
   console.log(`M2M100 local model root: ${LOCAL_ROOT}`);
+  console.log("Transformers.js runtime: browser/WASM compatibility mode under Termux Node");
 });
